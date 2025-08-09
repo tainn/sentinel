@@ -1,16 +1,12 @@
 [project]
-name = "bz-sentinel"
-version = "0.1.17"
-requires-python = ">=3.12"
+name = "sentinel"
+version = "0.1.18"
+requires-python = ">=3.13"
 dependencies = [
-  "cordhook @ git+https://github.com/tainn/cordhook.git@0.2.9",
-  "httpx==0.27.0",
-  "beautifulsoup4==4.12.3",
-  "loguru==0.7.2"
+  "cordhook @ git+https://github.com/tainn/cordhook.git@0.2.10",
+  "httpx==0.28.1",
+  "beautifulsoup4==4.13.4"
 ]
-
-[project.optional-dependencies]
-dev = ["uv", "ruff"]
 
 [tool.ruff]
 fix = true
@@ -36,9 +32,8 @@ select = [
   "RET",
   "SIM",
   "ARG",
-  "PTH",
+  "PTH"
 ]
-ignore = []
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]

@@ -1,4 +1,3 @@
-# bz-sentinel
+# sentinel
 
-monitor app that posts a discord webhook whenever a new forum post is recorded on
-the [bzflag forums](https://forums.bzflag.org)
+sentinel of bz forums [activity](https://forums.bzflag.org/search.php?search_id=active_topics)

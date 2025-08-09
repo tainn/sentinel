@@ -2,10 +2,10 @@
 .idea
 *.iml
 
-# toolchain
-.ruff_cache
-.venv
-uv.lock
-
-# conf
+# runtime
 .env
+
+# astral
+.venv
+.ruff_cache
+uv.lock

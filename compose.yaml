@@ -1,18 +1,16 @@
 services:
-  bz-sentinel:
+  sentinel:
     build:
       context: .
-    image: bz-sentinel:0.1.17
-    container_name: bz-sentinel
+    image: sentinel:0.1.18
+    container_name: sentinel
     restart: unless-stopped
     networks:
       - int
     env_file:
       - .env
     volumes:
-      - /var/data/bz-sentinel:/data
-    labels:
-      - "tainn.type=app"
+      - /var/data/sentinel:/data
     entrypoint: [ "uv", "run", "/app/src/main.py" ]
 
 networks:
