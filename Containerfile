@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:0.8.8-python3.13-alpine
+FROM ghcr.io/astral-sh/uv:0.11.6-python3.13-alpine
 
 ENV PYTHONPATH=/app:$PYTHONPATH
 ENV PYTHONUNBUFFERED=1
