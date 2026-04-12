@@ -1,18 +1,19 @@
 services:
   sentinel:
     build:
-      context: .
-    image: sentinel:0.1.18
-    container_name: sentinel
-    restart: unless-stopped
+      context: "."
+      dockerfile: "Containerfile"
+    image: "sentinel:0.1.20"
+    container_name: "sentinel"
+    restart: "unless-stopped"
     networks:
-      - int
+      - "sentinel"
     env_file:
-      - .env
+      - ".env"
     volumes:
-      - /var/data/sentinel:/data
+      - "/var/data/sentinel:/data"
     entrypoint: [ "uv", "run", "/app/src/main.py" ]
 
 networks:
-  int:
+  sentinel:
     external: true
