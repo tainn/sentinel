@@ -1,0 +1,43 @@
+alias f := fix
+alias s := sync
+alias c0 := container-prune
+alias cu := container-up
+alias ctu := container-tag-up
+alias cdw := container-down
+
+# command list
+default:
+    @just --list --unsorted
+
+# astral lint && fmt && check
+fix:
+    ruff check src
+    ruff format src
+    ty check src
+
+# astral lib sync
+sync:
+    uv sync
+
+# container prune
+container-prune:
+    docker system prune --all --force --volumes
+
+# container network && build && up && _prune
+container-up:
+    docker network create sentinel || true
+    VERSION=${VERSION:-dev} docker compose build --pull --no-cache
+    VERSION=${VERSION:-dev} docker compose up --detach --force-recreate
+    @just container-prune
+
+# git pull && checkout; container _up
+container-tag-up tag:
+    git pull
+    git checkout {{ tag }}
+    @VERSION={{ tag }} just container-up
+    git checkout -
+
+# container down
+container-down:
+    docker compose down
+    @just container-prune

@@ -1,6 +1,6 @@
 [project]
 name = "sentinel"
-version = "0.1.18"
+version = "0.1.21"
 requires-python = ">=3.13"
 dependencies = [
   "cordhook @ git+https://github.com/tainn/cordhook.git@0.2.10",
