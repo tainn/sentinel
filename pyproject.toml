@@ -1,11 +1,11 @@
 [project]
 name = "sentinel"
-version = "0.1.21"
+version = "0.1.22"
 requires-python = ">=3.13"
 dependencies = [
-  "cordhook @ git+https://github.com/tainn/cordhook.git@0.2.10",
-  "httpx==0.28.1",
-  "beautifulsoup4==4.13.4"
+  "beautifulsoup4==4.15.0",
+  "cordhook @ git+https://github.com/tainn/cordhook.git@0.2.12",
+  "httpx==0.28.1"
 ]
 
 [tool.ruff]
