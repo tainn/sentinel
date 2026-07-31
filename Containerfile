@@ -1,8 +1,18 @@
-FROM ghcr.io/astral-sh/uv:0.12.0-python3.14-alpine3.23
-ENV PYTHONPATH=/app:$PYTHONPATH
-ENV PYTHONUNBUFFERED=1
-RUN apk add build-base git
+FROM docker.io/rust:1.97.1-alpine3.24 AS build
+ARG TARGETARCH
+WORKDIR /build
+COPY src /build/src
+COPY Cargo.toml /build/Cargo.toml
+RUN apk add --no-cache musl-dev
+RUN \
+  case "${TARGETARCH}" in \
+    "amd64") RUSTARCH="x86_64" ;; \
+    "arm64") RUSTARCH="aarch64" ;; \
+  esac; \
+  rustup target add ${RUSTARCH}-unknown-linux-musl; \
+  cargo build --release --target ${RUSTARCH}-unknown-linux-musl; \
+  cp /build/target/${RUSTARCH}-unknown-linux-musl/release/sentinel /build/sentinel
+
+FROM scratch
 WORKDIR /app
-COPY pyproject.toml /app/pyproject.toml
-COPY src /app/src
-RUN uv sync
+COPY --from=build /build/sentinel /app/sentinel

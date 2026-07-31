@@ -1,5 +1,5 @@
+alias u := upgrade
 alias f := fix
-alias s := sync
 alias c0 := container-prune
 alias cu := container-up
 alias ctu := container-tag-up
@@ -9,15 +9,16 @@ alias cdw := container-down
 default:
     @just --list --unsorted
 
-# astral lint && fmt && check
-fix:
-    ruff check src
-    ruff format src
-    ty check src
+# cargo lib upgrade
+upgrade:
+    cargo upgrade --incompatible
 
-# astral lib sync
-sync:
-    uv sync
+# cargo lint && fmt && check && sort
+fix:
+    cargo clippy --fix --allow-dirty --allow-staged
+    cargo fmt
+    cargo check
+    cargo sort
 
 # container prune
 container-prune:
