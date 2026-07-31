@@ -13,6 +13,6 @@ RUN \
   cargo build --release --target ${RUSTARCH}-unknown-linux-musl; \
   cp /build/target/${RUSTARCH}-unknown-linux-musl/release/sentinel /build/sentinel
 
-FROM scratch
+FROM quay.io/hummingbird/core-runtime:2.43
 WORKDIR /app
 COPY --from=build /build/sentinel /app/sentinel
