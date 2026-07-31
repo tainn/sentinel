@@ -2,10 +2,9 @@
 .idea
 *.iml
 
+# cargo
+Cargo.lock
+target
+
 # runtime
 .env
-
-# astral
-.venv
-.ruff_cache
-uv.lock

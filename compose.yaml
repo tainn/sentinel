@@ -12,7 +12,7 @@ services:
       - ".env"
     volumes:
       - "/var/data/sentinel:/data"
-    entrypoint: [ "uv", "run", "/app/src/main.py" ]
+    entrypoint: [ "/app/sentinel" ]
 
 networks:
   sentinel:
