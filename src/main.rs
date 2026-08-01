@@ -164,7 +164,6 @@ async fn run_monitor(client: &Client) -> Result<()> {
         };
 
         if persist.contains(&data.last_post_id) {
-            println!("post previously already collected: {}", data.last_post_id);
             continue;
         }
 
