@@ -13,7 +13,6 @@ services:
       - ".env"
     volumes:
       - "/var/data/sentinel:/data"
-    entrypoint: [ "/app/sentinel" ]
 
 networks:
   sentinel:
