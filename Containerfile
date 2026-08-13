@@ -1,23 +1,10 @@
-FROM docker.io/rust:1.97.1-alpine3.24 AS build
-ARG TARGETARCH
+FROM docker.io/rust:1.97.1 AS build
 WORKDIR /build
-COPY src /build/src
 COPY Cargo.toml /build/Cargo.toml
-RUN apk add --no-cache musl-dev
-RUN \
-  case "${TARGETARCH}" in \
-    "amd64") \
-      RUSTARCH="x86_64"; \
-      export RUSTFLAGS="-C target-cpu=x86-64-v3" ;; \
-    "arm64") \
-      RUSTARCH="aarch64"; \
-      export RUSTFLAGS="-C target-cpu=generic" ;; \
-  esac; \
-  rustup target add ${RUSTARCH}-unknown-linux-musl; \
-  cargo build --release --target ${RUSTARCH}-unknown-linux-musl; \
-  cp /build/target/${RUSTARCH}-unknown-linux-musl/release/sentinel /build/sentinel
+COPY src /build/src
+RUN cargo build --release
 
 FROM quay.io/fedora/fedora-minimal:44
 WORKDIR /app
-COPY --from=build /build/sentinel /app/sentinel
+COPY --from=build /build/target/release/sentinel /app/sentinel
 ENTRYPOINT [ "/app/sentinel" ]
