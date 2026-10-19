@@ -1,258 +1,360 @@
 use anyhow::{Context, Result, anyhow};
-use reqwest::Client;
-use scraper::{Html, Selector};
-use serde::{Deserialize, Serialize};
+use reqwest::{Client, Url};
+use scraper::{ElementRef, Html, Selector};
+use serde::Serialize;
 use std::env;
-use std::path::Path;
+use std::str::FromStr;
 use std::time::Duration;
 use tokio::fs;
 use tokio::time::sleep;
 
-#[derive(Serialize, Deserialize, Default, Debug)]
-pub struct WebhookPayload {
-    pub username: Option<String>,
-    pub avatar_url: Option<String>,
-    pub content: Option<String>,
+const PERSISTENCE_PATH: &str = "/data/persistence.json";
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const USER_AGENT: &str = concat!(
+    env!("CARGO_PKG_NAME"),
+    "/",
+    env!("CARGO_PKG_VERSION"),
+    " (BZFlag forums Discord notifier)"
+);
+
+#[derive(Serialize, Default, Debug)]
+pub struct WebhookPayload<'a> {
+    pub username: Option<&'a str>,
+    pub avatar_url: Option<&'a str>,
+    pub content: Option<&'a str>,
     pub tts: Option<bool>,
-    pub embeds: Vec<Embed>,
+    pub embeds: Vec<Embed<'a>>,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
-pub struct Embed {
-    pub author: Option<EmbedAuthor>,
+#[derive(Serialize, Default, Debug)]
+pub struct Embed<'a> {
+    pub author: Option<EmbedAuthor<'a>>,
     pub color: Option<u32>,
-    pub title: Option<String>,
-    pub url: Option<String>,
-    pub description: Option<String>,
-    pub fields: Vec<EmbedField>,
-    pub thumbnail: Option<EmbedThumbnail>,
-    pub image: Option<EmbedImage>,
-    pub footer: Option<EmbedFooter>,
-    pub timestamp: Option<String>,
+    pub title: Option<&'a str>,
+    pub url: Option<&'a str>,
+    pub description: Option<&'a str>,
+    pub fields: Vec<EmbedField<'a>>,
+    pub thumbnail: Option<EmbedThumbnail<'a>>,
+    pub image: Option<EmbedImage<'a>>,
+    pub footer: Option<EmbedFooter<'a>>,
+    pub timestamp: Option<&'a str>,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
-pub struct EmbedAuthor {
-    pub name: Option<String>,
-    pub url: Option<String>,
-    pub icon_url: Option<String>,
+#[derive(Serialize, Default, Debug)]
+pub struct EmbedAuthor<'a> {
+    pub name: Option<&'a str>,
+    pub url: Option<&'a str>,
+    pub icon_url: Option<&'a str>,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
-pub struct EmbedField {
-    pub name: Option<String>,
-    pub value: Option<String>,
+#[derive(Serialize, Default, Debug)]
+pub struct EmbedField<'a> {
+    pub name: Option<&'a str>,
+    pub value: Option<&'a str>,
     pub inline: Option<bool>,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
-pub struct EmbedThumbnail {
-    pub url: Option<String>,
+#[derive(Serialize, Default, Debug)]
+pub struct EmbedThumbnail<'a> {
+    pub url: Option<&'a str>,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
-pub struct EmbedImage {
-    pub url: Option<String>,
+#[derive(Serialize, Default, Debug)]
+pub struct EmbedImage<'a> {
+    pub url: Option<&'a str>,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
-pub struct EmbedFooter {
-    pub text: Option<String>,
-    pub icon_url: Option<String>,
+#[derive(Serialize, Default, Debug)]
+pub struct EmbedFooter<'a> {
+    pub text: Option<&'a str>,
+    pub icon_url: Option<&'a str>,
 }
 
 struct ScrapedData {
     author_name: String,
-    author_url: String,
-    last_post_url: String,
+    author_url: Url,
+    last_post_url: Url,
     last_post_id: String,
     thread_name: String,
-    thread_url: String,
+    thread_url: Url,
+}
+
+struct Config {
+    search_url: Url,
+    persist_quantity: usize,
+    monitor_interval: Duration,
+    err_retry_interval: Duration,
+    webhook_username: String,
+    webhook_avatar: String,
+    webhook_channels: Vec<String>,
+}
+
+struct Selectors {
+    list_inner: Selector,
+    responsive_show: Selector,
+    anchor: Selector,
+    topic_title: Selector,
+}
+
+impl Config {
+    fn from_env() -> Result<Self> {
+        Ok(Self {
+            search_url: search_url()?,
+            persist_quantity: env_parse("PERSIST_QUANTITY", 200),
+            monitor_interval: env_duration("MONITOR_INTERVAL", Duration::from_secs(60)),
+            err_retry_interval: env_duration("ERR_RETRY_INTERVAL", Duration::from_secs(3600)),
+            webhook_username: env_string("WEBHOOK_USERNAME", "sentinel"),
+            webhook_avatar: env_string("WEBHOOK_AVATAR", "https://i.imgur.com/FHLEi2t.png"),
+            webhook_channels: webhook_channels()?,
+        })
+    }
+}
+
+impl Selectors {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            list_inner: parse_selector("div.list-inner")?,
+            responsive_show: parse_selector("div.responsive-show")?,
+            anchor: parse_selector("a")?,
+            topic_title: parse_selector("a.topictitle")?,
+        })
+    }
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     println!("running sentinel...");
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .unwrap_or_default();
+    let config = Config::from_env()?;
+    let client = build_client()?;
+    let selectors = Selectors::new()?;
 
     loop {
-        if let Err(e) = run_monitor(&client).await {
-            eprintln!("global exception caught: {e}");
-            let retry_interval = env::var("ERR_RETRY_INTERVAL")
-                .unwrap_or_else(|_| String::from("3600"))
-                .parse::<f64>()
-                .unwrap_or(3600.0);
-            sleep(Duration::from_secs_f64(retry_interval)).await;
-        } else {
-            let monitor_interval = env::var("MONITOR_INTERVAL")
-                .unwrap_or_else(|_| String::from("60"))
-                .parse::<f64>()
-                .unwrap_or(60.0);
-            sleep(Duration::from_secs_f64(monitor_interval)).await;
-        }
+        let delay = match run_monitor(&client, &selectors, &config).await {
+            Ok(()) => config.monitor_interval,
+            Err(e) => {
+                eprintln!("global exception caught: {e:#}");
+                config.err_retry_interval
+            }
+        };
+
+        sleep(delay).await;
     }
 }
 
-async fn run_monitor(client: &Client) -> Result<()> {
-    let domain = env::var("DOMAIN").unwrap_or_else(|_| String::from("https://forums.bzflag.org"));
-    let url = format!("{domain}/search.php?search_id=active_topics");
+async fn run_monitor(client: &Client, selectors: &Selectors, config: &Config) -> Result<()> {
+    let search_url = &config.search_url;
+    let page = fetch_page(client, search_url).await?;
+    let topics = scrape_topics(&page, selectors, search_url);
 
-    let res = client.get(&url).send().await?.text().await?;
-    let document = Html::parse_document(&res);
-
-    let list_inner_sel = Selector::parse("div.list-inner")
-        .map_err(|_| anyhow!("failed to parse list-inner selector"))?;
-    let responsive_show_sel = Selector::parse("div.responsive-show")
-        .map_err(|_| anyhow!("failed to parse responsive-show selector"))?;
-    let a_sel = Selector::parse("a").map_err(|_| anyhow!("failed to parse anchor selector"))?;
-    let topictitle_sel = Selector::parse("a.topictitle")
-        .map_err(|_| anyhow!("failed to parse topictitle selector"))?;
-
-    let persistence_path = Path::new("/data/persistence.json");
-
-    if !persistence_path.exists() {
-        fs::write(persistence_path, "[]").await?;
+    if topics.is_empty() {
+        eprintln!(
+            "warning: no topics found at {search_url}, access may be denied or the page layout may have changed"
+        );
+        return Ok(());
     }
 
-    let persist_content = fs::read_to_string(persistence_path).await?;
-    let mut persist: Vec<String> = serde_json::from_str(&persist_content)?;
+    notify_new_topics(client, config, topics).await
+}
 
-    for entry in document.select(&list_inner_sel) {
-        let auth_lp_forum = match entry.select(&responsive_show_sel).next() {
-            Some(node) => node,
-            None => continue,
-        };
+async fn fetch_page(client: &Client, url: &Url) -> Result<String> {
+    Ok(client.get(url.as_str()).send().await?.text().await?)
+}
 
-        let auth_lp_forum_data: Vec<_> = auth_lp_forum.select(&a_sel).collect();
-        if auth_lp_forum_data.len() < 3 {
+fn scrape_topics(page: &str, selectors: &Selectors, base: &Url) -> Vec<ScrapedData> {
+    let document = Html::parse_document(page);
+
+    document
+        .select(&selectors.list_inner)
+        .filter_map(|entry| scrape_topic(entry, selectors, base))
+        .collect()
+}
+
+fn scrape_topic(entry: ElementRef, selectors: &Selectors, base: &Url) -> Option<ScrapedData> {
+    let details = entry.select(&selectors.responsive_show).next()?;
+    let mut anchors = details.select(&selectors.anchor);
+    let (Some(author), Some(last_post), Some(_forum)) =
+        (anchors.next(), anchors.next(), anchors.next())
+    else {
+        return None;
+    };
+    let thread = entry.select(&selectors.topic_title).next()?;
+
+    let mut last_post_url = resolve_href(base, last_post)?;
+    let last_post_id = post_id(&last_post_url)?;
+    last_post_url.set_fragment(Some(&last_post_id));
+
+    Some(ScrapedData {
+        author_name: author.text().collect(),
+        author_url: resolve_href(base, author)?,
+        last_post_url,
+        last_post_id,
+        thread_name: thread.text().collect(),
+        thread_url: resolve_href(base, thread)?,
+    })
+}
+
+fn resolve_href(base: &Url, element: ElementRef) -> Option<Url> {
+    let href = element.value().attr("href")?;
+    let mut url = base.join(href).ok()?;
+    strip_sid(&mut url);
+    Some(url)
+}
+
+fn strip_sid(url: &mut Url) {
+    let Some(query) = url.query() else {
+        return;
+    };
+
+    let query = query
+        .split('&')
+        .filter(|param| !param.starts_with("sid="))
+        .collect::<Vec<_>>()
+        .join("&");
+
+    url.set_query((!query.is_empty()).then_some(query.as_str()));
+}
+
+fn post_id(url: &Url) -> Option<String> {
+    url.query_pairs()
+        .find(|(key, _)| key == "p")
+        .map(|(_, value)| format!("p{value}"))
+}
+
+async fn notify_new_topics(
+    client: &Client,
+    config: &Config,
+    topics: Vec<ScrapedData>,
+) -> Result<()> {
+    let mut persisted = load_persisted().await?;
+
+    for topic in topics {
+        if persisted.contains(&topic.last_post_id) {
             continue;
         }
 
-        let thread = match entry.select(&topictitle_sel).next() {
-            Some(node) => node,
-            None => continue,
-        };
+        discord_webhook(client, config, &topic).await?;
 
-        let author_name = auth_lp_forum_data[0].text().collect::<String>();
-        let author_href = auth_lp_forum_data[0].value().attr("href").unwrap_or("");
+        let last_post_id = topic.last_post_id;
+        println!("new post collected and webhook sent: {last_post_id}");
 
-        let last_post_href = auth_lp_forum_data[1].value().attr("href").unwrap_or("");
-
-        let thread_name = thread.text().collect::<String>();
-        let thread_href = thread.value().attr("href").unwrap_or("");
-
-        let author_url = parse_url(&domain, author_href, false);
-        let last_post_url = parse_url(&domain, last_post_href, true);
-        let last_post_id = last_post_url
-            .split('#')
-            .next_back()
-            .unwrap_or("")
-            .to_string();
-        let thread_url = parse_url(&domain, thread_href, false);
-
-        let data = ScrapedData {
-            author_name,
-            author_url,
-            last_post_url,
-            last_post_id: last_post_id.clone(),
-            thread_name,
-            thread_url,
-        };
-
-        if persist.contains(&data.last_post_id) {
-            continue;
-        }
-
-        discord_webhook(client, &data).await?;
-
-        println!("new post collected and webhook sent: {}", data.last_post_id);
-        persist.push(data.last_post_id.clone());
-
-        let persist_quantity = env::var("PERSIST_QUANTITY")
-            .unwrap_or_else(|_| String::from("200"))
-            .parse::<usize>()
-            .unwrap_or(200);
-
-        if persist.len() > persist_quantity {
-            let excess = persist.len() - persist_quantity;
-            persist.drain(0..excess);
-        }
-
-        let updated_json = serde_json::to_string_pretty(&persist)?;
-        fs::write(persistence_path, updated_json).await?;
+        remember_post(&mut persisted, last_post_id, config.persist_quantity);
+        save_persisted(&persisted).await?;
     }
 
     Ok(())
 }
 
-fn parse_url(domain: &str, raw_url: &str, post: bool) -> String {
-    let mut clean_url = raw_url
-        .split("sid=")
-        .next()
-        .unwrap_or("")
-        .replace("amp;", "");
+fn remember_post(persisted: &mut Vec<String>, post_id: String, quantity: usize) {
+    persisted.push(post_id);
 
-    if clean_url.ends_with('&') {
-        clean_url.pop();
-    }
-
-    if post {
-        let post_id = clean_url.split('=').next_back().unwrap_or("");
-        clean_url = format!("{clean_url}#p{post_id}");
-    }
-
-    let sliced = if clean_url.chars().count() >= 2 {
-        let idx = clean_url
-            .char_indices()
-            .nth(2)
-            .map(|(i, _)| i)
-            .unwrap_or(clean_url.len());
-        &clean_url[idx..]
-    } else {
-        ""
-    };
-
-    format!("{domain}/{sliced}")
+    let excess = persisted.len().saturating_sub(quantity);
+    persisted.drain(..excess);
 }
 
-async fn discord_webhook(client: &Client, ec: &ScrapedData) -> Result<()> {
-    let author_name = &ec.author_name;
-    let author_url = &ec.author_url;
-    let thread_name = &ec.thread_name;
-    let thread_url = &ec.thread_url;
-    let last_post_url = &ec.last_post_url;
+async fn load_persisted() -> Result<Vec<String>> {
+    if !fs::try_exists(PERSISTENCE_PATH).await? {
+        return Ok(Vec::new());
+    }
 
-    let description = format!(
+    let content = fs::read_to_string(PERSISTENCE_PATH)
+        .await
+        .with_context(|| format!("failed to read {PERSISTENCE_PATH}"))?;
+
+    serde_json::from_str(&content).with_context(|| format!("failed to parse {PERSISTENCE_PATH}"))
+}
+
+async fn save_persisted(persisted: &[String]) -> Result<()> {
+    let json = serde_json::to_string_pretty(persisted)?;
+
+    fs::write(PERSISTENCE_PATH, json)
+        .await
+        .with_context(|| format!("failed to write {PERSISTENCE_PATH}"))
+}
+
+async fn discord_webhook(client: &Client, config: &Config, topic: &ScrapedData) -> Result<()> {
+    let description = describe(topic);
+    let payload = build_payload(config, &description);
+
+    for hook in &config.webhook_channels {
+        client.post(hook).json(&payload).send().await?;
+    }
+
+    Ok(())
+}
+
+fn describe(topic: &ScrapedData) -> String {
+    let ScrapedData {
+        author_name,
+        author_url,
+        last_post_url,
+        thread_name,
+        thread_url,
+        ..
+    } = topic;
+
+    format!(
         "new [**post**]({last_post_url}) by [{author_name}]({author_url}) in [{thread_name}]({thread_url})"
-    );
+    )
+}
 
-    let mut payload = WebhookPayload {
-        username: Some(env::var("WEBHOOK_USERNAME").unwrap_or_else(|_| String::from("sentinel"))),
-        avatar_url: Some(
-            env::var("WEBHOOK_AVATAR")
-                .unwrap_or_else(|_| String::from("https://i.imgur.com/FHLEi2t.png")),
-        ),
+fn build_payload<'a>(config: &'a Config, description: &'a str) -> WebhookPayload<'a> {
+    WebhookPayload {
+        username: Some(&config.webhook_username),
+        avatar_url: Some(&config.webhook_avatar),
+        embeds: vec![Embed {
+            description: Some(description),
+            color: Some(0),
+            ..Default::default()
+        }],
         ..Default::default()
-    };
-
-    let embed = Embed {
-        description: Some(description),
-        color: Some(0),
-        ..Default::default()
-    };
-
-    payload.embeds.push(embed);
-
-    let webhook_channels_env = env::var("WEBHOOK_CHANNELS").context("missing WEBHOOK_CHANNELS")?;
-    let hooks: Vec<String> = serde_json::from_str(&webhook_channels_env)?;
-
-    for hook in hooks {
-        client.post(&hook).json(&payload).send().await?;
     }
+}
 
-    Ok(())
+fn build_client() -> Result<Client> {
+    Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .user_agent(USER_AGENT)
+        .cookie_store(true)
+        .build()
+        .context("failed to build http client")
+}
+
+fn parse_selector(selector: &str) -> Result<Selector> {
+    Selector::parse(selector).map_err(|e| anyhow!("failed to parse selector {selector}: {e}"))
+}
+
+fn search_url() -> Result<Url> {
+    let domain = env_string("DOMAIN", "https://forums.bzflag.org");
+    let base = domain.trim_end_matches('/');
+
+    Url::parse(&format!("{base}/search.php?search_id=active_topics"))
+        .with_context(|| format!("invalid DOMAIN: {domain}"))
+}
+
+fn webhook_channels() -> Result<Vec<String>> {
+    let channels = env_var("WEBHOOK_CHANNELS").context("missing WEBHOOK_CHANNELS")?;
+
+    serde_json::from_str(&channels).context("WEBHOOK_CHANNELS must be a JSON array of strings")
+}
+
+fn env_var(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|value| !value.is_empty())
+}
+
+fn env_string(key: &str, default: &str) -> String {
+    env_var(key).unwrap_or_else(|| default.to_owned())
+}
+
+fn env_parse<T: FromStr>(key: &str, default: T) -> T {
+    env_var(key)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_duration(key: &str, default: Duration) -> Duration {
+    env_var(key)
+        .and_then(|value| value.parse().ok())
+        .and_then(|secs| Duration::try_from_secs_f64(secs).ok())
+        .unwrap_or(default)
 }
