@@ -5,13 +5,13 @@ All these rules apply, unless explicitly stated otherwise anywhere else in conte
 ## General
 
 - Prioritize accuracy and quality over speed. Always re-check your work for correctness before finalizing it.
-- Never perform any `git` operations outside the following: `diff`, `log`, `show`, `status`.
 - Always clean up any temporary utility files you create.
 
 ## Code
 
 ### Any
 
+- Never perform any `git` operations that create, update, delete, or in any form modify state. They must be read-only.
 - Keep the code highly modular. One function should do one thing and do it well.
 - Use early returns and guard clauses to reduce nesting levels.
 - Do not write code comments unless they are absolutely necessary.
